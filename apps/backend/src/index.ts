@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { checkDbConnection } from './config/db';
+import authRoutes from './routes/auth.routes';
 
 dotenv.config();
 
@@ -15,6 +16,9 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
+
+// API Routes
+app.use('/api/auth', authRoutes);
 
 const io = new Server(server, {
   cors: {
@@ -39,16 +43,11 @@ io.on('connection', (socket) => {
 app.set('io', io);
 
 app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'OK',
-    system: 'Reflex Backend API',
-    timestamp: new Date(),
-  });
+  res.status(200).json({ status: 'OK', system: 'Reflex Backend API', timestamp: new Date() });
 });
 
 const startServer = async () => {
   await checkDbConnection();
-  
   server.listen(PORT, () => {
     console.log(`🚀 Reflex Backend Engine running on http://localhost:${PORT}`);
   });
