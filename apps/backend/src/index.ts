@@ -5,6 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { checkDbConnection } from './config/db';
 import authRoutes from './routes/auth.routes';
+import deliveryRoutes from './routes/delivery.routes';
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ app.use(express.json());
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/deliveries', deliveryRoutes);
 
 const io = new Server(server, {
   cors: {
