@@ -7,9 +7,7 @@ dotenv.config();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-  },
+  ssl: { rejectUnauthorized: false },
 });
 
 export const createDelivery = async (req: Request, res: Response): Promise<void> => {
@@ -33,6 +31,8 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
       });
       return;
     }
+
+    const cleanPhoneNumber = String(phone_number).replace(/[\s\-\(\)]/g, '');
 
     let finalPickupAddress = pickup_address;
 
@@ -61,7 +61,7 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
     const values = [
       retailerId,
       customer_name,
-      phone_number,
+      cleanPhoneNumber,
       finalPickupAddress,
       delivery_address,
       order_details,
@@ -70,7 +70,6 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
     const result = await pool.query(queryText, values);
     const newDelivery = result.rows[0];
 
-    // Emit socket event automatically to all connected clients (Riders/Admins)
     io.emit('delivery:created', newDelivery);
 
     res.status(201).json({
