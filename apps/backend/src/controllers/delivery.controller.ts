@@ -11,14 +11,8 @@ const pool = new Pool({
   },
 });
 
-/**
- * @desc    Create a new delivery order for a retailer
- * @route   POST /api/deliveries/create
- * @access  Private (Retailer authenticated via JWT)
- */
 export const createDelivery = async (req: Request, res: Response): Promise<void> => {
   try {
-    // 1. Extract retailer ID from authenticated JWT request user context
     const retailerId = (req as any).user?.id || req.body.retailer_id;
 
     if (!retailerId) {
@@ -31,7 +25,6 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
 
     const { customer_name, phone_number, delivery_address, order_details, pickup_address } = req.body;
 
-    // Validate mandatory frontend fields
     if (!customer_name || !phone_number || !delivery_address || !order_details) {
       res.status(400).json({
         success: false,
@@ -40,7 +33,6 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // 2. Resolve pickup_address: Use provided value OR fallback to retailer's registered shop address
     let finalPickupAddress = pickup_address;
 
     if (!finalPickupAddress) {
@@ -48,11 +40,9 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
         `SELECT shop_address FROM users WHERE id = $1`,
         [retailerId]
       );
-
       finalPickupAddress = retailerQuery.rows[0]?.shop_address || 'Registered Shop Location';
     }
 
-    // 3. Insert new delivery record into database
     const queryText = `
       INSERT INTO deliveries (
         retailer_id, 
@@ -78,7 +68,6 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
 
     const result = await pool.query(queryText, values);
 
-    // 4. Return complete delivery object for UI rendering
     res.status(201).json({
       success: true,
       message: 'Delivery order created successfully',

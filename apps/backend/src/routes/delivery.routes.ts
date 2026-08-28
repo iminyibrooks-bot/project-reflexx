@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { createDelivery, updateLocation } from '../controllers/delivery.controller';
+import { createDelivery } from '../controllers/delivery.controller';
 
 const router = Router();
 
+// POST /api/deliveries/create
 router.post('/create', createDelivery);
-router.post('/location', updateLocation);
 
 export default router;

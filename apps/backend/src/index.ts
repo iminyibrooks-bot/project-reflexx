@@ -1,58 +1,27 @@
 import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { checkDbConnection } from './config/db';
 import authRoutes from './routes/auth.routes';
 import deliveryRoutes from './routes/delivery.routes';
 
 dotenv.config();
 
 const app = express();
-const server = http.createServer(app);
-
 const PORT = process.env.PORT || 5000;
-const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
-app.use(cors({ origin: CORS_ORIGIN }));
+// Middleware
+app.use(cors());
 app.use(express.json());
 
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/deliveries', deliveryRoutes);
 
-const io = new Server(server, {
-  cors: {
-    origin: CORS_ORIGIN,
-    methods: ['GET', 'POST', 'PATCH'],
-  },
-});
-
-io.on('connection', (socket) => {
-  console.log(`[Socket Connected]: ${socket.id}`);
-
-  socket.on('join_room', (room: string) => {
-    socket.join(room);
-    console.log(`[Socket ${socket.id}] joined room: ${room}`);
-  });
-
-  socket.on('disconnect', () => {
-    console.log(`[Socket Disconnected]: ${socket.id}`);
-  });
-});
-
-app.set('io', io);
-
+// Health Check
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', system: 'Reflex Backend API', timestamp: new Date() });
+  res.status(200).json({ status: 'OK', message: 'Project Reflex API is running' });
 });
 
-const startServer = async () => {
-  await checkDbConnection();
-  server.listen(PORT, () => {
-    console.log(`🚀 Reflex Backend Engine running on http://localhost:${PORT}`);
-  });
-};
-
-startServer();
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
