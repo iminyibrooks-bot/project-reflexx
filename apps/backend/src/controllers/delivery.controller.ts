@@ -1,68 +1,94 @@
 import { Request, Response } from 'express';
-import { query } from '../config/db';
+import { Pool } from 'pg';
+import dotenv from 'dotenv';
 
-export const createDelivery = async (req: Request, res: Response) => {
-  const { customer_name, phone_number, pickup_address, delivery_address, order_details, retailer_id } = req.body;
+dotenv.config();
 
-  if (!customer_name || !phone_number || !pickup_address || !delivery_address || !order_details || !retailer_id) {
-    return res.status(400).json({ 
-      error: 'Missing required fields: customer_name, phone_number, pickup_address, delivery_address, order_details, retailer_id' 
-    });
-  }
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
 
-  const tracking_number = `ORD-${Math.floor(1000 + Math.random() * 9000)}`;
-
+/**
+ * @desc    Create a new delivery order for a retailer
+ * @route   POST /api/deliveries/create
+ * @access  Private (Retailer authenticated via JWT)
+ */
+export const createDelivery = async (req: Request, res: Response): Promise<void> => {
   try {
-    const result = await query(
-      `INSERT INTO deliveries 
-        (tracking_number, retailer_id, customer_name, phone_number, pickup_address, dropoff_address, order_details, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'REQUESTED')
-       RETURNING *`,
-      [tracking_number, retailer_id, customer_name, phone_number, pickup_address, delivery_address, order_details]
-    );
+    // 1. Extract retailer ID from authenticated JWT request user context
+    const retailerId = (req as any).user?.id || req.body.retailer_id;
 
-    const delivery = result.rows[0];
-
-    const io = req.app.get('io');
-    if (io) {
-      io.to('dispatchers').emit('delivery_created', delivery);
-    }
-
-    return res.status(201).json(delivery);
-  } catch (error) {
-    console.error('[Delivery Controller Error]:', error);
-    return res.status(500).json({ error: 'Failed to create order' });
-  }
-};
-
-export const updateLocation = async (req: Request, res: Response) => {
-  const { delivery_id, rider_id, latitude, longitude } = req.body;
-
-  if (!delivery_id || !rider_id || latitude === undefined || longitude === undefined) {
-    return res.status(400).json({ error: 'Missing location parameters' });
-  }
-
-  try {
-    await query(
-      `INSERT INTO location_logs (delivery_id, rider_id, latitude, longitude)
-       VALUES ($1, $2, $3, $4)`,
-      [delivery_id, rider_id, latitude, longitude]
-    );
-
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`delivery_${delivery_id}`).emit('location_update', {
-        delivery_id,
-        rider_id,
-        latitude,
-        longitude,
-        timestamp: new Date(),
+    if (!retailerId) {
+      res.status(401).json({
+        success: false,
+        message: 'Unauthorized: Retailer session not found',
       });
+      return;
     }
 
-    return res.status(200).json({ status: 'Location updated' });
+    const { customer_name, phone_number, delivery_address, order_details, pickup_address } = req.body;
+
+    // Validate mandatory frontend fields
+    if (!customer_name || !phone_number || !delivery_address || !order_details) {
+      res.status(400).json({
+        success: false,
+        message: 'Missing required fields: customer_name, phone_number, delivery_address, or order_details',
+      });
+      return;
+    }
+
+    // 2. Resolve pickup_address: Use provided value OR fallback to retailer's registered shop address
+    let finalPickupAddress = pickup_address;
+
+    if (!finalPickupAddress) {
+      const retailerQuery = await pool.query(
+        `SELECT shop_address FROM users WHERE id = $1`,
+        [retailerId]
+      );
+
+      finalPickupAddress = retailerQuery.rows[0]?.shop_address || 'Registered Shop Location';
+    }
+
+    // 3. Insert new delivery record into database
+    const queryText = `
+      INSERT INTO deliveries (
+        retailer_id, 
+        customer_name, 
+        phone_number, 
+        pickup_address, 
+        delivery_address, 
+        order_details, 
+        status
+      ) 
+      VALUES ($1, $2, $3, $4, $5, $6, 'Requested') 
+      RETURNING *;
+    `;
+
+    const values = [
+      retailerId,
+      customer_name,
+      phone_number,
+      finalPickupAddress,
+      delivery_address,
+      order_details,
+    ];
+
+    const result = await pool.query(queryText, values);
+
+    // 4. Return complete delivery object for UI rendering
+    res.status(201).json({
+      success: true,
+      message: 'Delivery order created successfully',
+      data: result.rows[0],
+    });
   } catch (error) {
-    console.error('[Location Audit Error]:', error);
-    return res.status(500).json({ error: 'Failed to log location' });
+    console.error('Error creating delivery:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error while creating delivery order',
+    });
   }
 };
