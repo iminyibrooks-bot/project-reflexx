@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import { io } from '../index';
 
 dotenv.config();
 
@@ -67,11 +68,15 @@ export const createDelivery = async (req: Request, res: Response): Promise<void>
     ];
 
     const result = await pool.query(queryText, values);
+    const newDelivery = result.rows[0];
+
+    // Emit socket event automatically to all connected clients (Riders/Admins)
+    io.emit('delivery:created', newDelivery);
 
     res.status(201).json({
       success: true,
       message: 'Delivery order created successfully',
-      data: result.rows[0],
+      data: newDelivery,
     });
   } catch (error) {
     console.error('Error creating delivery:', error);
