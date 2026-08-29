@@ -205,7 +205,7 @@ setIsCreatingOrder(true)
 
 try {
   const response = await fetch(
-    API_URL + '/api/deliveries/create',
+    API_URL + '/api/orders',
     {
       method: 'POST',
       headers: {
