@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 
-const API_URL = 'http://localhost:5000'
+const API_URL = import.meta.env.VITE_API_URL
 
 function App() {
 const [formData, setFormData] = useState({
@@ -22,6 +22,7 @@ password: '',
 
 const [loginError, setLoginError] = useState('')
 const [isLoggingIn, setIsLoggingIn] = useState(false)
+const [showPassword, setShowPassword] = useState(false)
 const [isCreatingOrder, setIsCreatingOrder] = useState(false)
 
 useEffect(() => {
@@ -38,7 +39,7 @@ if (savedToken) {
 useEffect(() => {
 if (!token) return
 
-```
+
 const socket = io(API_URL)
 
 socket.on('delivery:status_updated', (updatedDelivery) => {
@@ -56,14 +57,14 @@ socket.on('delivery:status_updated', (updatedDelivery) => {
 return () => {
   socket.disconnect()
 }
-```
+
 
 }, [token])
 
 const validateForm = () => {
 const newErrors = {}
 
-```
+
 const namePattern =
   /^[A-Za-zÀ-ÖØ-öø-ÿ]+(?:[ '-][A-Za-zÀ-ÖØ-öø-ÿ]+)*$/
 
@@ -101,14 +102,14 @@ if (!formData.orderDetails.trim()) {
 setErrors(newErrors)
 
 return Object.keys(newErrors).length === 0
-```
+
 
 }
 
 const handleChange = (event) => {
 const { name, value } = event.target
 
-```
+
 const cleanedValue =
   name === 'phoneNumber'
     ? value.replace(/\s+/g, '')
@@ -125,26 +126,26 @@ if (errors[name]) {
     [name]: '',
   })
 }
-```
+
 
 }
 
 const handleLoginChange = (event) => {
 const { name, value } = event.target
 
-```
+
 setLoginData({
   ...loginData,
   [name]: value,
 })
-```
+
 
 }
 
 const handleLogin = async (event) => {
 event.preventDefault()
 
-```
+
 setLoginError('')
 setIsLoggingIn(true)
 
@@ -181,14 +182,14 @@ try {
 } finally {
   setIsLoggingIn(false)
 }
-```
+
 
 }
 
 const handleSubmit = async (event) => {
 event.preventDefault()
 
-```
+
 const isValid = validateForm()
 
 if (!isValid) {
@@ -248,13 +249,13 @@ try {
 } finally {
   setIsCreatingOrder(false)
 }
-```
+
 
 }
 
 return ( <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
 
-```
+
   <header className="bg-indigo-700 text-white shadow-md">
     <div className="max-w-6xl mx-auto px-6 py-5">
       <h1 className="text-2xl font-bold">
@@ -306,15 +307,26 @@ return ( <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white
                 Password
               </label>
 
-              <input
-                type="password"
-                name="password"
-                value={loginData.password}
-                onChange={handleLoginChange}
-                placeholder="Enter your password"
-                required
-                className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  name="password"
+                  value={loginData.password}
+                  onChange={handleLoginChange}
+                  placeholder="Enter your password"
+                  required
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 pr-12 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                 />
+
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-indigo-600"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                 >
+                  {showPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
             </div>
 
             {loginError && (
