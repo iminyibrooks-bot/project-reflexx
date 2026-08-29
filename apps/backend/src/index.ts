@@ -30,6 +30,16 @@ app.use('/api/deliveries', deliveryRoutes);
 // Socket connection listener
 io.on('connection', (socket) => {
   console.log(`⚡ Client connected: ${socket.id}`);
+
+  // Clients join the room for each delivery they want live status updates for.
+  socket.on('join_delivery', (deliveryId: string) => {
+    socket.join(`delivery_${deliveryId}`);
+  });
+
+  socket.on('leave_delivery', (deliveryId: string) => {
+    socket.leave(`delivery_${deliveryId}`);
+  });
+
   socket.on('disconnect', () => {
     console.log(`❌ Client disconnected: ${socket.id}`);
   });
