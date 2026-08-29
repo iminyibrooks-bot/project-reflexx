@@ -1,72 +1,57 @@
 import { Request, Response } from 'express';
-import { query } from '../config/db';
-import { generateToken } from '../utils/auth';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { supabase } from '../config/db';
 
-export const registerUser = async (req: Request, res: Response) => {
-  const { name, email, password, role } = req.body;
+const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
 
-  if (!name || !email || !password || !role) {
-    return res.status(400).json({ error: 'Missing required fields: name, email, password, role' });
-  }
-
-  try {
-    // Check if user exists
-    const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existing.rows.length > 0) {
-      return res.status(409).json({ error: 'User with this email already exists' });
-    }
-
-    // Insert user (Note: add bcrypt hashing in production middleware)
-    const result = await query(
-      `INSERT INTO users (name, email, password_hash, role) 
-       VALUES ($1, $2, $3, $4) 
-       RETURNING id, name, email, role, created_at`,
-      [name, email, password, role]
-    );
-
-    const user = result.rows[0];
-    const token = generateToken({ userId: user.id, role: user.role });
-
-    return res.status(201).json({ user, token });
-  } catch (error) {
-    console.error('[Auth Controller Error]:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-};
-
-export const loginUser = async (req: Request, res: Response) => {
+export const loginUser = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password required' });
+    res.status(400).json({ error: 'Email and password are required' });
+    return;
   }
 
   try {
-    const result = await query('SELECT * FROM users WHERE email = $1', [email]);
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, name, email, password, role')
+      .eq('email', email.trim());
+
+    if (error || !users || users.length === 0) {
+      res.status(401).json({ error: 'Invalid credentials' });
+      return;
     }
 
-    const user = result.rows[0];
+    const user = users[0];
 
-    // Password verification logic
-    if (user.password_hash !== password) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+    const isBcryptMatch = await bcrypt.compare(password, user.password);
+    const isDevMatch = password === user.password;
+
+    if (!isBcryptMatch && !isDevMatch) {
+      res.status(401).json({ error: 'Invalid credentials' });
+      return;
     }
 
-    const token = generateToken({ userId: user.id, role: user.role });
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '1d' }
+    );
 
-    return res.status(200).json({
+    res.status(200).json({
+      message: 'Login successful',
+      token,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
-      },
-      token,
+        role: user.role
+      }
     });
-  } catch (error) {
-    console.error('[Auth Login Error]:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+  } catch (err: any) {
+    console.error('[Auth Login Error]:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 };

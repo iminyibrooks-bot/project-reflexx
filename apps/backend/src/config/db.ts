@@ -1,32 +1,13 @@
-import { Pool } from 'pg';
+import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
 
-pool.on('error', (err) => {
-  console.error('[PostgreSQL Pool Error]:', err);
-});
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error('SUPABASE_URL and SUPABASE_KEY must be defined in .env');
+}
 
-export const query = (text: string, params?: any[]) => {
-  return pool.query(text, params);
-};
-
-export const checkDbConnection = async (): Promise<boolean> => {
-  try {
-    const res = await pool.query('SELECT NOW()');
-    console.log(`[DB Connected]: PostgreSQL responsive at ${res.rows[0].now}`);
-    return true;
-  } catch (error) {
-    console.error('[DB Error]: Failed to connect to PostgreSQL. Ensure service is running.', error);
-    return false;
-  }
-};
-
-export default pool;
+export const supabase = createClient(supabaseUrl, supabaseKey);
