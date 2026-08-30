@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { pool } from '../config/db'; // adjust path if your pool lives elsewhere
+import { supabase } from '../config/db'; // adjust path if db.ts lives elsewhere
 
 const KENYAN_PHONE_REGEX = /^(?:\+254|0)7\d{8}$/;
 const NAME_REGEX = /^[A-Za-z\s.'-]+$/;
@@ -26,28 +26,40 @@ export async function createOrder(req: Request, res: Response) {
   }
 
   const order_id = generateOrderId();
-  const status = 'REQUESTED';
 
-  try {
-    const result = await pool.query(
-      `INSERT INTO deliveries (order_id, customer_name, phone_number, delivery_address, order_details, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       RETURNING *`,
-      [order_id, customer_name, phone_number, delivery_address, order_details, status]
-    );
-    return res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (error) {
+  const { data, error } = await supabase
+    .from('deliveries')
+    .insert([
+      {
+        order_id,
+        customer_name,
+        phone_number,
+        delivery_address,
+        order_details,
+        status: 'REQUESTED',
+      },
+    ])
+    .select()
+    .single();
+
+  if (error) {
     console.error('createOrder error:', error);
     return res.status(500).json({ success: false, message: 'Failed to create order' });
   }
+
+  return res.status(201).json({ success: true, data });
 }
 
 export async function getOrders(req: Request, res: Response) {
-  try {
-    const result = await pool.query(`SELECT * FROM deliveries ORDER BY created_at DESC`);
-    return res.status(200).json({ success: true, data: result.rows });
-  } catch (error) {
+  const { data, error } = await supabase
+    .from('deliveries')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
     console.error('getOrders error:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch orders' });
   }
-    }
+
+  return res.status(200).json({ success: true, data });
+      }
