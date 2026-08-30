@@ -1,9 +1,9 @@
 import { Router } from 'express';
+import { createOrder, getOrders } from '../controllers/order.controller';
 
 const router = Router();
 
-router.get('/orders', (req, res) => {
-  res.json({ message: 'Order endpoint ready' });
-});
+router.post('/orders', createOrder);
+router.get('/orders', getOrders);
 
 export default router;
