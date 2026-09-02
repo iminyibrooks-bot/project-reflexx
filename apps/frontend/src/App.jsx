@@ -231,7 +231,7 @@ try {
 
   setOrders((currentOrders) => [
     ...currentOrders,
-    data,
+    data.data,
   ])
 
   alert('Order created successfully!')
