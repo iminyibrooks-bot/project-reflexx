@@ -63,3 +63,46 @@ export async function getOrders(req: Request, res: Response) {
 
   return res.status(200).json({ success: true, data });
       }
+
+export async function scanOrder(req: Request, res: Response) {
+  const { order_id } = req.params;
+  const { rider_id, action } = req.body;
+
+  if (!rider_id || !rider_id.trim()) {
+    return res.status(400).json({ success: false, message: 'rider_id is required' });
+  }
+
+  const validActions = ['PICKED_UP', 'DELIVERED'];
+  if (!action || !validActions.includes(action)) {
+    return res.status(400).json({ success: false, message: 'action must be PICKED_UP or DELIVERED' });
+  }
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('deliveries')
+    .select('*')
+    .eq('order_id', order_id)
+    .single();
+
+  if (fetchError || !existing) {
+    return res.status(404).json({ success: false, message: 'Order not found' });
+  }
+
+  const updateFields: Record<string, any> = { status: action };
+  if (action === 'PICKED_UP') {
+    updateFields.assigned_rider_id = rider_id;
+  }
+
+  const { data, error } = await supabase
+    .from('deliveries')
+    .update(updateFields)
+    .eq('order_id', order_id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('scanOrder error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update order' });
+  }
+
+  return res.status(200).json({ success: true, data });
+}
