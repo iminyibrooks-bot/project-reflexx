@@ -1,68 +1,68 @@
 # Real-Time Engine Design — Reflex
 
-Architecture, recommendation, and trade-off log for the real-time layer that pushes order status changes (assign / pick up / deliver) to the Retailer dashboard (Cess) and Dispatcher dashboard (Joyce) without a page refresh. Reconciled against what's actually live in this repo as of 2026-08-31, not the original planning doc.
+*Supersedes the 2026-08-31 version of this document, which assumed a Vercel serverless deployment. The backend has since moved to Render — a persistent, long-running server — which changes the real-time recommendation below.*
 
-## What's actually live (as of 2026-08-31)
+Architecture, recommendation, and trade-off log for the real-time layer that pushes order status changes (assign / pick up / deliver) to the Retailer dashboard and Dispatcher dashboard without a page refresh.
 
-- **Base URL:** `project-reflexx.vercel.app` (Express + Supabase, deployed on Vercel)
+## What's actually live (as of 2026-09-05)
+
+- **Backend:** Express + Supabase, deployed on Render — a persistent server process, not serverless
+- **Base URL:** `project-reflexx-backend.onrender.com`
 - **Order fields:** `order_id`, `customer_name`, `phone_number`, `delivery_address`, `order_details`, `status`, `assigned_rider_id`, `created_at`
 - **Status flow:** `REQUESTED → ASSIGNED → PICKED_UP → DELIVERED`
-- **Confirmed endpoints:** `GET /api/orders`, `POST /api/orders`
-- **Building, not live yet:** `POST /api/orders/:order_id/scan`
-- **Auth:** deliberately removed for this submission — every route above is open. This is a known, flagged gap, not something this design solves (see Open Items).
+- **Confirmed endpoints:** `GET /api/orders`, `POST /api/orders`, `POST /api/orders/:order_id/scan`
+- **Auth:** deliberately off on every route for this submission — flagged as a known gap, not something this doc solves (see Open Items)
 
-## Does this need a socket server?
+## Recommendation: Socket.io, room-per-order — not Supabase Realtime
 
-**Won't hold up here:** plain Socket.io assumes one long-lived process holding room membership in memory. A Vercel serverless function is the opposite — a fresh, short-lived process per invocation, torn down after it responds, sharing no memory with the next one. A client that opens a socket to one invocation has no guarantee that another dispatcher's assignment event runs on that same instance; it can just as easily execute on an instance the retailer's browser was never connected to.
+The previous version of this doc ruled out Socket.io because the backend ran on Vercel serverless functions, where each invocation is a fresh, memory-isolated process — no stable place for a socket connection to live. That constraint is gone. Render runs the Express server as one continuously-alive process, which is exactly what Socket.io needs: a long-lived process that can hold room membership (`delivery:{order_id}`) in memory and emit to it directly.
 
-**What actually works: Supabase Realtime Broadcast.** Supabase is already our database, and its Realtime layer is a persistent, always-on service we don't have to run ourselves. Same room-per-order idea as the original Socket.io plan — a channel named `delivery:{order_id}` — just hosted somewhere that's actually alive between requests.
+Given that, plain Socket.io is the better fit here, for three concrete reasons:
 
-### Why one breaks and the other doesn't
+1. **Less new infrastructure.** The server already exists and already handles the write. Attaching Socket.io to it is a few lines; wiring Supabase Realtime Broadcast would mean standing up and learning a second pub/sub system alongside Supabase-as-DB, for no benefit this deployment actually needs.
+2. **No cross-instance problem to solve.** This runs as a single Render service with no autoscaling configured. In-memory room state can't split across instances that don't exist.
+3. **One fewer hop.** The same request handler that validates and writes the status change can emit to the room immediately, instead of making a second call out to an external broadcast service.
 
-**Socket.io direct on Vercel (breaks):** Rider's phone sends a status update → Vercel function (ephemeral, one invocation) receives it and would need to emit to the Dispatcher's dashboard — but the dashboard's connection, if it exists at all, is tied to a *different* invocation with no shared memory. The emit never reaches it. The function is torn down after it responds regardless.
-
-**Supabase Realtime (what we're shipping):** Status change → Vercel API route validates and writes → `UPDATE orders.status` in Postgres, and in the same request, an explicit `broadcast` call to `delivery:{order_id}` → Supabase Realtime (a persistent service, not a Vercel function) pushes the event to every subscribed dashboard — Retailer (Cess) and Dispatcher (Joyce) both update live, no refresh.
-
-The key difference isn't that the Vercel API route is somehow less ephemeral than a Socket.io handler — it's exactly as short-lived. It just never needs to *survive* past its own response, because it hands the actual waiting off to a service that's alive continuously.
+**The honest cost:** this ties the real-time layer's availability to the Express server's own uptime. A Render redeploy — or an idle spin-down on lower tiers — drops every open socket. Socket.io's client auto-reconnects, but a status change that lands in that exact gap needs a catch-up read, which isn't built yet (see Open Items). Supabase Realtime wouldn't have this specific failure mode, since it runs as a separately-hosted service independent of this backend's lifecycle. If the team needs to scale past one Render instance later, this trade-off is revisited head-on in Trade-off 1 below — not quietly assumed away.
 
 ## The working path, step by step
 
-1. **Action.** Joyce assigns a rider, or a rider scans pickup or delivery.
-2. **Write.** The Vercel API route validates the transition and updates `orders.status` in Postgres.
-3. **Broadcast.** On a successful write, the same route calls `supabase.channel('delivery:{order_id}').send(...)` directly — explicit, not left to replication lag off the write.
-4. **Push.** Any dashboard subscribed to that channel — Cess's, Joyce's — receives the event straight from Supabase Realtime and updates its local state. No refresh.
-5. **Rider side.** A rider's device subscribes to its own assigned-order channel the same way, so a new assignment appears without polling.
+1. **Action.** Dispatcher assigns a rider, or a rider hits `POST /api/orders/:order_id/scan` for pickup or delivery.
+2. **Write.** The Express route validates the transition and updates `orders.status` (and `assigned_rider_id`, where relevant) in Supabase Postgres.
+3. **Broadcast.** In the same request, after a successful write, the handler calls `io.to('delivery:' + order_id).emit('status_changed', { order_id, status })` directly — same process, no external hop.
+4. **Push.** The Retailer dashboard (joined to its own order's room) and the Dispatcher dashboard (joined to the rooms for every order it's tracking) receive the event and update local state. No refresh.
+5. **Rider side.** A rider's device joins its own assigned-order room the same way, so a new assignment shows up live.
 
-## Fallback, if the channel wiring doesn't land in time
+## Fallback, if the socket wiring doesn't land in time
 
-Poll `GET /api/orders` on an interval — every 5–10 seconds — instead of subscribing. It costs latency equal to the poll interval and adds read load for a benefit Realtime gives for free. Ship it as a degraded mode if the broadcast wiring runs out of runway before the deadline, not as a parallel design to maintain.
+Poll `GET /api/orders` on an interval — every 5–10 seconds — instead of connecting a socket. It costs latency equal to the poll interval and adds read load for a benefit the socket layer gives for free. Ship it as a degraded mode if the Socket.io wiring runs out of runway, not as a parallel design to maintain.
 
 ## Trade-off log
 
-Three trade-offs, written in State → Context → Evidence so they hold up under cross-exam.
+Three trade-offs, in State → Context → Evidence → With more time, written to hold up under cross-exam.
 
-### 1. In-memory socket state vs. a shared store for multi-instance scaling
+### 1. Concurrency/scaling approach for the real-time layer
 
-- **State:** We hold no in-memory socket state of our own. Supabase Realtime *is* the shared store, so the usual "Socket.io needs a Redis adapter to scale horizontally" problem never comes up.
-- **Context:** Vercel functions share nothing between invocations; two concurrent requests can land on two processes with no common memory. Offloading the persistent connection to Supabase sidesteps that instead of engineering around it ourselves.
-- **Evidence:** Vercel's Hobby-tier functions cap execution around 10 seconds — nowhere near long enough to hold a socket open. Realtime runs on infrastructure we already pay for as our database.
-- **With more time:** if we ever need sub-second, non-DB-backed signals — live rider GPS, a "typing" indicator — reach for Realtime Presence, not a bespoke socket server.
+- **State:** Socket.io attached directly to the single Render Express process, with in-memory room membership and no external pub/sub broker.
+- **Context:** This deployment runs one Render instance with no autoscaling configured, so in-memory rooms stay consistent by construction — there's no second instance for room state to disagree with. That's what makes skipping Supabase Realtime reasonable right now, not a default choice.
+- **Evidence:** Confirmed single Render service on the current plan; `io.sockets.adapter.rooms` reflects true membership because it's the same in-memory `Map` for every connected client — verified against a two-tab local test where both tabs joined `delivery:ORD-146` and both received the same emit.
+- **With more time:** Before scaling to multiple Render instances, add `@socket.io/redis-adapter` (or move the broadcast step to Supabase Realtime instead) — don't scale horizontally first and discover rooms have silently split.
 
 ### 2. PWA vs. native app for the rider-facing scan interface
 
 - **State:** The rider scan flow ships as a PWA (mobile web), not a native iOS/Android app.
 - **Context:** Riders need camera access, which mobile browsers already support well enough via `getUserMedia`/BarcodeDetector or a JS scanner library. A PWA ships behind a URL — critical for grassroots rollout, since riders are often on low-end Android phones where every install competes for storage and data.
 - **Evidence:** No app-store review cycle to clear (native review commonly runs one to several days), no install step beyond "Add to Home Screen," one codebase instead of two.
-- **With more time:** add a real service worker for offline queueing, so a scan made in a dead zone syncs once connectivity returns instead of failing silently.
+- **With more time:** Add a real service worker for offline queueing, so a scan made in a dead zone syncs once connectivity returns instead of failing silently.
 
 ### 3. Soft locking vs. strict DB-level locks for concurrent assignment
 
 - **State:** Two dispatchers racing to assign the same order are resolved with optimistic UI plus a backend guard clause, not an explicit pessimistic lock.
-- **Context:** At grassroots scale — a handful of dispatchers, not hundreds — the odds of two people racing the same order within milliseconds are low, and a conditional update already prevents the double-assignment outcome. Wrapping every assignment in an explicit transaction adds held-connection risk on short-lived serverless invocations for a race that's already rare and already handled.
+- **Context:** At grassroots scale — a handful of dispatchers, not hundreds — the odds of two people racing the same order within milliseconds are low, and a conditional update already prevents the double-assignment outcome without the added complexity of holding a transaction open on every assignment.
 - **Evidence:** The guard is one atomic statement: `UPDATE orders SET assigned_rider_id=$1, status='ASSIGNED' WHERE order_id=$2 AND status='REQUESTED'`. Postgres row-level atomicity guarantees only one of two racing requests gets `rowCount: 1`; the loser gets `0` and the API returns a 409 immediately.
-- **With more time:** push that 409 back over the same broadcast channel as a clear toast for the dispatcher who lost the race, and add a short-lived optimistic "claim" other dispatchers see live, so fewer of them race the same order in the first place.
+- **With more time:** Push that 409 back over the same `delivery:{order_id}` room as a clear toast for the dispatcher who lost the race, and add a short-lived optimistic "claim" other dispatchers see live, so fewer of them race the same order in the first place.
 
 ## Open items — flagged on purpose, not solved here
 
 - Auth is off on every route. Fine for this submission; before any pilot handling a real customer's phone number and address, this closes first.
-- The scan endpoint isn't live yet. This design assumes it broadcasts the same way `POST /api/orders` will, but that path hasn't been exercised end to end.
+- **Reconnection gap:** if the Render service restarts (a deploy, or idle spin-down on lower tiers), connected dashboards drop their sockets. Socket.io's client auto-reconnects, but a status change that happens in that exact window needs a catch-up mechanism — e.g., re-fetching `GET /api/orders` once on reconnect — which isn't implemented yet.
