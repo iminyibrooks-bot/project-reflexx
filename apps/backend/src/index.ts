@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import orderRoutes from './routes/order.routes';
+import authRoutes from './routes/auth.routes';
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api', orderRoutes);
+app.use('/api/auth', authRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
